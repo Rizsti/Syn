@@ -1,0 +1,194 @@
+<?php
+
+/**
+ * Syndication: Syndicates data from a website for distribution to other websites
+ * By Andrea Dewey
+ * 
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+class Syndication extends WireData implements Module, ConfigurableModule
+{
+	static $defaults = array(
+		'syndication_url' => 'agisyn.dev',
+		'request_site' => 'batco'
+	);
+
+	public static function getModuleInfo() 
+	{
+		return array(
+			'title' => 'Syndication', 
+			'version' => 10, 
+			'summary' => 'Gets data from another website to be displayed on the current website.',
+			'href' => '',
+			'singular' => true, 
+			'autoload' => true,
+		);
+	}
+
+	public function init()
+	{
+		
+	}
+
+
+	public static function getModuleConfigInputfields(array $data)
+	{
+		$fields = new InputfieldWrapper();
+		$modules = Wire::getFuel('modules');
+
+		$field = $modules->get("InputfieldText");
+		$field->name = "syndication_url";
+		$field->label = __("The root url of to get the syndicated data from.");
+		$field->value = static::dataValueOrDefault('syndication_url', $data);
+		$field->description = __("The website the data will be gathered from");
+		$fields->add($field);
+
+		$field = $modules->get("InputfieldText");
+		$field->name = "request_site";
+		$field->label = __("Current site");
+		$field->value = static::dataValueOrDefault('request_site', $data);
+		$field->description = __("This tells the syndication site which site is making the request so it may get accurate data");
+		$fields->add($field);
+
+		return $fields;
+	}
+
+	public static function dataValueOrDefault($key, $data=null)
+	{
+		if ( ! isset($data[$key]))
+			if (isset(static::$defaults[$key]))
+				return static::$defaults[$key];
+			else
+				return null;
+
+		return $data[$key];
+	}
+
+	public function valueOrDefault($key)
+	{
+		$value = $this->get($key);
+
+		if (is_null($value)) {
+			if (isset(static::$defaults[$key]))
+				return static::$defaults[$key];
+			return $value;
+		}
+
+		return $value;
+	}
+
+	/////////////////////////////////
+
+
+	function getSyndicationUrl() {
+		return $this->valueOrDefault('syndication_url');
+	}
+
+	function getRequestSite() {
+		return $this->valueOrDefault('request_site');
+	}
+
+	function executeCurlRequest($url) {
+
+		$connection_url = getSyndicationUrl() . $url . '?site=' . urlencode($this->getRequestSite());
+		$curl_connection = curl_init($connection_url);
+
+
+		//set options
+		curl_setopt($curl_connection, CURLOPT_CONNECTTIMEOUT, 30);
+		curl_setopt($curl_connection, CURLOPT_USERAGENT, 
+		  "Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1)");
+		curl_setopt($curl_connection, CURLOPT_RETURNTRANSFER, true);
+		curl_setopt($curl_connection, CURLOPT_SSL_VERIFYPEER, false);
+		curl_setopt($curl_connection, CURLOPT_FOLLOWLOCATION, 1);
+		 
+		//perform our request
+		$result = curl_exec($curl_connection);
+		 
+		//close the connection
+		curl_close($curl_connection);
+
+		return $result;
+
+	}
+
+	function jsonToPage($json) {
+		$page = new Page();
+		foreach ($json as $key => $value) {
+			$page->$key = $value;
+		}
+		return $page;
+	}
+
+	function jsonToArray($json) {
+
+		$array = array();
+		foreach ($json as $key => $value) {
+			$array[$key] = $value;
+		}
+		return $array();
+	}
+
+
+	function makeRequest($url, $return_type = null) {
+		$results = $this->executeCurlRequest($url);
+
+		//decode the results
+		$decoded = json_decode($results);
+		
+		//for debugging
+		// echo json_last_error();
+
+		$array = new PageArray();
+
+
+		if (is_array($decoded)) {
+			foreach ($decoded as $key => $value) {
+				$page = $this->jsonToPage($value);
+				$array->push($page);
+			}
+		}elseif (count($decoded) == 0) {
+			return null;
+		} else {
+			$page = $this->jsonToPage($decoded);
+			if ($return_type == 'array') {
+				$array->push($page);
+				return $array;
+
+			}
+			return $page;
+		}
+		return $array;
+	}
+
+	function getAsStdObject($url) {
+		$results = $this->executeCurlRequest($url);
+
+		if (strpos($results, 'int')===0) {
+			$json_start = strpos($results, '[{');
+			$results = substr($results, $json_start);
+		}
+		return json_decode($results);
+
+	}
+
+	/////////
+
+
+	function getImage($page) {
+		$url = getSyndicationUrl() . '/site/assets/files/' . $page->id . '/' . $page->featured_image1[0]->data;
+		return $url;
+	}
+}
